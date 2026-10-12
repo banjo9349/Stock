@@ -82,6 +82,8 @@ textarea { width: 100%; padding: 11px 12px; border: 1.5px solid var(--line); bor
 .warn { background: var(--accent-soft); color: var(--accent); border-radius: 12px; padding: 10px 12px; font-size: 13px; margin-bottom: 10px; line-height: 1.5; }
 .sg { display: grid; grid-template-columns: 1.5fr 1fr 34px; gap: 6px; margin-bottom: 6px; }
 .sg .a { text-align: right; font-weight: 600; }
+.sg.s3 { grid-template-columns: 1.4fr .8fr .7fr 34px; }
+.sg input { min-width: 0; }
 .chip { display: inline-block; margin-top: 10px; padding: 5px 12px; border-radius: 20px; font-size: 12px; background: rgba(255,255,255,.22); color: #fff; }
 .toast { position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #2b2118; color: #fff; padding: 11px 16px; border-radius: 14px; font-size: 13px; z-index: 40; max-width: 90%; text-align: center; opacity: 0; pointer-events: none; transition: opacity .25s; }
 .toast.on { opacity: 1; }
@@ -143,6 +145,7 @@ body { padding-bottom: calc(86px + env(safe-area-inset-bottom)) !important; }
 <div id="pg-stock" style="display:none">
   <div class="card">
     <h3>📦 สต๊อกวัตถุดิบ</h3>
+    <button class="scan-open" onclick="openScan('stock')">📷 สแกนรายชื่อวัตถุดิบจากรูป</button>
     <div class="srow shead"><div>ชื่อ</div><div>คงเหลือ</div><div>ควรมี</div><div>หน่วย</div><div></div></div>
     <div id="stlist"></div>
     <div class="btns">
@@ -167,7 +170,7 @@ body { padding-bottom: calc(86px + env(safe-area-inset-bottom)) !important; }
 </nav>
 
 <div class="ov" id="ov"><div class="ov-in">
-  <div class="ov-top"><h2>📷 สแกนสูตรจากรูป</h2><button class="x" onclick="closeScan()">✕</button></div>
+  <div class="ov-top"><h2 id="scan-title">📷 สแกนสูตรจากรูป</h2><button class="x" onclick="closeScan()">✕</button></div>
   <div class="steps"><span id="s1" class="on">1 เลือกรูป</span><span id="s2">2 ตัดภาพ</span><span id="s3">3 ตรวจสอบ</span></div>
 
   <div id="p1">
@@ -336,14 +339,19 @@ addRow();
 
 /* ===== สแกนสูตรจากรูป ===== */
 const MODEL = "claude-sonnet-5-5";
+const PROMPT_STOCK = 'นี่คือภาพรายการวัตถุดิบ/สินค้า (ลายมือหรือพิมพ์ ภาษาไทย/อังกฤษ) เช่น รายการของในร้านหรือบิลสั่งของ อ่านทุกรายการตามลำดับในภาพ ตอบเป็น JSON อย่างเดียว รูปแบบ {"items":[{"name":"ชื่อวัตถุดิบ","amount":ตัวเลข หรือ null,"unit":"หน่วยตามที่เขียน เช่น กก. กรัม ถุง ขวด ชิ้น ไม่มีให้เป็น \\"\\""}]} กติกา: name คือชื่อวัตถุดิบล้วน ๆ ไม่รวมตัวเลขหรือหน่วย ห้ามแปลงหน่วย ห้ามเดา ถ้าอ่านตัวเลขไม่ออกให้ amount เป็น null';
 const PROMPT = 'นี่คือภาพสูตรอาหารที่เขียนด้วยลายมือหรือพิมพ์ (ภาษาไทย/อังกฤษ) อ่านรายการวัตถุดิบทั้งหมดตามลำดับในภาพ ตอบเป็น JSON อย่างเดียว รูปแบบ {"title":"ชื่อสูตรถ้ามี ไม่มีให้เป็น \\"\\"","items":[{"name":"ชื่อวัตถุดิบ","amount":ตัวเลข หรือ null}]} กติกา: amount คือน้ำหนักเป็นกรัม ถ้าเขียนเป็น กก./kg ให้แปลงเป็นกรัม ถ้าหน่วยไม่ใช่น้ำหนัก (เช่น ช้อนโต๊ะ ฟอง มล.) ให้เขียนหน่วยต่อท้ายในวงเล็บหลังชื่อ และให้ amount เป็นตัวเลขนั้น ห้ามเดา ถ้าอ่านตัวเลขไม่ออกให้ amount เป็น null';
-let origFile = null, origOri = 0, cropUntouched = true, src = null, rot = 0, imgEl = null, crop = null, scale = 1, drag = null, scanRows = [], scanTitle = "", cropped = null;
+let origFile = null, origOri = 0, cropUntouched = true, src = null, rot = 0, imgEl = null, crop = null, scale = 1, drag = null, scanRows = [], scanTitle = "", cropped = null, scanMode = "recipe";
 const $ = id => document.getElementById(id);
 
 function loadCfg() { try { const c = JSON.parse(localStorage.getItem("scan_cfg") || "{}"); if (c.engine) $("engine").value = c.engine; if (c.key) $("apikey").value = c.key; } catch (e) {} }
 function saveCfg() { try { localStorage.setItem("scan_cfg", JSON.stringify({ engine: $("engine").value, key: $("apikey").value.trim() })); } catch (e) {} }
 
-function openScan() { $("ov").classList.add("on"); showStep(1); }
+function openScan(mode) {
+  scanMode = mode === "stock" ? "stock" : "recipe";
+  $("scan-title").textContent = scanMode === "stock" ? "📷 สแกนรายการวัตถุดิบ" : "📷 สแกนสูตรจากรูป";
+  $("ov").classList.add("on"); showStep(1);
+}
 function closeScan() { $("ov").classList.remove("on"); }
 function showStep(n) {
   [1, 2, 3].forEach(i => { $("p" + i).style.display = i === n ? "block" : "none"; $("s" + i).classList.toggle("on", i <= n); });
@@ -491,7 +499,7 @@ async function scanAI(key) {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
       body: JSON.stringify({ model: MODEL, max_tokens: 1500, messages: [{ role: "user", content: [
-        { type: "image", source: { type: "base64", media_type: type, data: data } }, { type: "text", text: PROMPT }] }] })
+        { type: "image", source: { type: "base64", media_type: type, data: data } }, { type: "text", text: scanMode === "stock" ? PROMPT_STOCK : PROMPT }] }] })
     });
     return { r, j: await r.json() };
   };
@@ -504,7 +512,7 @@ async function scanAI(key) {
   const t = (j.content || []).map(c => c.text || "").join("");
   const o = JSON.parse(t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1));
   scanTitle = o.title || "";
-  scanRows = (o.items || []).map(i => ({ name: String(i.name || ""), amount: i.amount == null ? "" : i.amount }));
+  scanRows = (o.items || []).map(i => ({ name: String(i.name || ""), amount: i.amount == null ? "" : i.amount, unit: String(i.unit || "") }));
 }
 
 async function scanOCR() {
@@ -514,20 +522,24 @@ async function scanOCR() {
     s.onload = ok; s.onerror = () => no(new Error("โหลดตัวอ่านไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต")); document.head.appendChild(s);
   });
   const res = await Tesseract.recognize(enhance(getCropped(2600)), "tha+eng", { logger: m => { if (m.status && m.progress != null) setSt("กำลังอ่าน... " + Math.round(m.progress * 100) + "%"); } });
-  scanTitle = ""; scanRows = parseText(res.data.text);
+  scanTitle = ""; scanRows = parseText(res.data.text, scanMode === "stock");
 }
 
-function parseText(t) {
+function parseText(t, keep) {
   t = t.replace(/[๐-๙]/g, d => "๐๑๒๓๔๕๖๗๘๙".indexOf(d));
   const out = [];
   t.split("\n").forEach(line => {
     line = line.trim(); if (!line) return;
     const m = line.match(/^(.*?)[\s:：.\-–=]*(\d+(?:[.,]\d+)?)\s*(kg|กก\.?|กิโลกรัม|กิโล|g|กรัม|ก\.|ml|มล\.?|ซีซี|cc)?\s*(.*)$/i);
-    if (!m) { out.push({ name: line.replace(/(?<=[ก-๙])\s+(?=[ก-๙])/g, ""), amount: "" }); return; }
+    if (!m) { out.push({ name: line.replace(/(?<=[ก-๙])\s+(?=[ก-๙])/g, ""), amount: "", unit: "" }); return; }
     let name = (m[1] || m[4] || "").replace(/(?<=[ก-๙])\s+(?=[ก-๙])/g, "").trim();
     let amt = parseFloat(m[2].replace(",", "."));
-    if (/^(kg|กก|กิโล)/i.test(m[3] || "")) amt *= 1000;
-    out.push({ name, amount: amt });
+    const u = m[3] || "";
+    let unit = "";
+    if (keep) unit = /^(kg|กก|กิโล)/i.test(u) ? "กก." : /^(g|กรัม|ก\.)/i.test(u) ? "กรัม" : /^(ml|มล|ซีซี|cc)/i.test(u) ? "มล." : "";
+    else if (/^(kg|กก|กิโล)/i.test(u)) amt *= 1000;
+    if (keep && !unit && m[1] && m[4] && /^\S{1,8}$/.test(m[4].trim())) unit = m[4].trim();   // เช่น "น้ำปลา 3 ขวด"
+    out.push({ name, amount: amt, unit });
   });
   return out;
 }
@@ -535,28 +547,47 @@ function parseText(t) {
 function pasteText() {
   const t = $("pastebox").value.trim();
   if (!t) return alert("ยังไม่มีข้อความ กรุณาวางข้อความที่คัดลอกมาก่อน");
-  cropped = null; scanTitle = ""; scanRows = parseText(t); showReview();
+  cropped = null; scanTitle = ""; scanRows = parseText(t, scanMode === "stock"); showReview();
 }
 function showReview() {
+  const st = scanMode === "stock";
   $("p3").innerHTML = `${cropped ? '<img class="thumb" src="' + cropped.toDataURL("image/jpeg", .7) + '">' : ''}
-    <div class="warn">✏️ ตรวจและแก้ไขให้ถูกต้องก่อนนำเข้า ตัวเลขเป็นหน่วย <b>กรัม</b> ${scanTitle ? "· ชื่อสูตร: <b>" + esc(scanTitle) + "</b>" : ""}</div>
+    <div class="warn">✏️ ตรวจและแก้ไขให้ถูกต้องก่อนนำเข้า ${st ? "ตัวเลขจะเข้าช่อง <b>คงเหลือ</b> ถ้าไม่ต้องการให้ลบตัวเลขออก" : "ตัวเลขเป็นหน่วย <b>กรัม</b>"} ${!st && scanTitle ? "· ชื่อสูตร: <b>" + esc(scanTitle) + "</b>" : ""}</div>
     <div id="rv"></div>
-    <button class="b ghost" style="width:100%;margin-bottom:8px" onclick="scanRows.push({name:'',amount:''});drawReview()">+ เพิ่มบรรทัด</button>
+    <button class="b ghost" style="width:100%;margin-bottom:8px" onclick="scanRows.push({name:'',amount:'',unit:''});drawReview()">+ เพิ่มบรรทัด</button>
     <div class="btns">
-      <button class="b save" onclick="importScan(true)">แทนที่สูตรปัจจุบัน</button>
+      <button class="b save" onclick="importScan(true)">${st ? "แทนที่รายการทั้งหมด" : "แทนที่สูตรปัจจุบัน"}</button>
       <button class="b add" onclick="importScan(false)">เพิ่มต่อท้าย</button>
       <button class="b ghost full" onclick="showStep(cropped ? 2 : 1)">← ย้อนกลับ / อ่านซ้ำ</button>
     </div>`;
   drawReview(); showStep(3);
 }
 function drawReview() {
-  $("rv").innerHTML = scanRows.length ? scanRows.map((r, i) => `<div class="sg">
+  const st = scanMode === "stock";
+  $("rv").innerHTML = scanRows.length ? scanRows.map((r, i) => `<div class="sg${st ? " s3" : ""}">
     <input value="${esc(r.name)}" placeholder="ชื่อ" oninput="scanRows[${i}].name=this.value">
-    <input class="a" type="number" inputmode="decimal" step="any" value="${r.amount}" placeholder="กรัม" oninput="scanRows[${i}].amount=this.value===''?'':parseFloat(this.value)">
+    <input class="a" type="number" inputmode="decimal" step="any" value="${r.amount}" placeholder="${st ? "จำนวน" : "กรัม"}" oninput="scanRows[${i}].amount=this.value===''?'':parseFloat(this.value)">
+    ${st ? `<input list="units" value="${esc(r.unit || "")}" placeholder="หน่วย" oninput="scanRows[${i}].unit=this.value">` : ""}
     <button class="del" onclick="scanRows.splice(${i},1);drawReview()">✕</button></div>`).join("")
     : '<div class="empty">ไม่พบรายการ ลองตัดภาพให้ชัดขึ้น หรือเพิ่มบรรทัดเอง</div>';
 }
+function importStockScan(replace) {
+  const add = scanRows.filter(r => (r.name || "").trim()).map(r => ({ name: r.name.trim(), qty: r.amount, par: "", unit: (r.unit || "").trim() }));
+  if (!add.length) return alert("ยังไม่มีรายการให้นำเข้า");
+  let nw = 0, up = 0;
+  if (replace) {
+    if (!confirm("แทนที่รายการสต๊อกทั้งหมดด้วยรายการที่สแกน?")) return;
+    stock = add; nw = add.length;
+  } else add.forEach(a => {
+    const ex = stock.find(x => (x.name || "").trim() === a.name);
+    if (ex) { if (a.qty !== "") ex.qty = a.qty; if (!ex.unit && a.unit) ex.unit = a.unit; up++; }
+    else { stock.push(a); nw++; }
+  });
+  saveStock(true); renderStock(); closeScan();
+  toast("เพิ่ม " + nw + " รายการ" + (up ? " · อัปเดต " + up + " รายการที่มีชื่อซ้ำ" : "") + " อย่าลืมกรอก \"ควรมี\"");
+}
 function importScan(replace) {
+  if (scanMode === "stock") return importStockScan(replace);
   const add = scanRows.filter(r => r.name.trim() || r.amount !== "").map(r => ({ name: r.name.trim(), orig: r.amount }));
   if (!add.length) return alert("ยังไม่มีรายการให้นำเข้า");
   if (replace) { rows = add; ratio = 1; if (scanTitle && !$("recipe-name").value.trim()) $("recipe-name").value = scanTitle; $("saved").value = ""; setLast(""); }
